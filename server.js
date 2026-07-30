@@ -132,44 +132,44 @@ async function getLiveStatus(logins) {
 // ---------------------------------------------------------------------------
 // 4. Rota consumida pelo painel
 // ---------------------------------------------------------------------------
-let statusCache = null;
-let statusCacheAt = 0;
-const STATUS_CACHE_MS = 30_000;
+
+const TEAMS_CONFIG = [
+  { id: "osguerreiros", displayName: "Equipe Principal", slug: "equipeprincipal" },
+  { id: "academiaosg", displayName: "Equipe Academia", slug: "equipeacademia" }
+];
+
+
 
 app.get("/api/team-status", async (req, res) => {
-  const team = req.query.team || TEAM_NAME;
-
-  if (!team) {
-    return res.status(400).json({ error: "Parâmetro 'team' não informado" });
-  }
+  // Pega o ID da equipe enviado pelo frontend ou usa o primeiro por padrão
+  const selectedTeamId = req.query.team || "principal";
+  
+  // Encontra a configuração correspondente
+  const teamConfig = TEAMS_CONFIG.find(t => t.id === selectedTeamId) || TEAMS_CONFIG[0];
+  const twitchSlug = teamConfig.slug;
 
   try {
-    const now = Date.now();
-    if (statusCache && now - statusCacheAt < STATUS_CACHE_MS) {
-      return res.json(statusCache);
-    }
-
-    const members = await getTeamMembers(team);
+    // IMPORTANTE: Agora usamos o 'twitchSlug' para buscar na API da Twitch
+    const members = await getTeamMembers(twitchSlug);
     const logins = members.map((m) => m.login);
 
-    // Faz as duas requisições Helix em paralelo para otimizar velocidade
     const [liveMap, avatarMap] = await Promise.all([
       getLiveStatus(logins),
       getUsersAvatars(logins)
     ]);
 
     const result = {
-      team,
-      updatedAt: new Date().toISOString(),
+      activeTeamId: teamConfig.id, // Informa ao front qual ID está ativo
+      teams: TEAMS_CONFIG,         // Envia a lista de equipes para o front montar o menu
       members: members
         .map((m) => {
           const mLoginLower = m.login.toLowerCase();
           const live = liveMap.get(mLoginLower);
-          const avatar = avatarMap.get(mLoginLower) || ""; // Pega o avatar mapeado
+          const avatar = avatarMap.get(mLoginLower) || "";
           
           return {
             ...m,
-            profilePicture: avatar, // Adicionado ao JSON retornado para o frontend
+            profilePicture: avatar,
             isLive: Boolean(live),
             stream: live || null,
           };
@@ -179,9 +179,6 @@ app.get("/api/team-status", async (req, res) => {
           return a.displayName.localeCompare(b.displayName);
         }),
     };
-
-    statusCache = result;
-    statusCacheAt = now;
 
     res.json(result);
   } catch (err) {
