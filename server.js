@@ -142,7 +142,7 @@ const TEAMS_CONFIG = [
 
 app.get("/api/team-status", async (req, res) => {
   // Pega o ID da equipe enviado pelo frontend ou usa o primeiro por padrão
-  const selectedTeamId = req.query.team || "principal";
+  const selectedTeamId = req.query.team || "osguerreiros";
   
   // Encontra a configuração correspondente
   const teamConfig = TEAMS_CONFIG.find(t => t.id === selectedTeamId) || TEAMS_CONFIG[0];
