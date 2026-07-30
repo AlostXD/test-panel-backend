@@ -1,20 +1,3 @@
-// backend/server.js
-//
-// EBS (Extension Backend Service) simples para o painel "Equipe Twitch".
-//
-// O que ele faz:
-// 1. Pega e guarda em cache um App Access Token da Twitch (Client Credentials)
-// 2. Consulta o time (Twitch Team) pra saber quem são os membros
-// 3. Consulta quais desses membros estão AO VIVO agora
-// 4. Expõe tudo isso numa rota simples que o painel (frontend) chama
-//
-// Variáveis de ambiente necessárias (ver .env.example):
-//   TWITCH_CLIENT_ID
-//   TWITCH_CLIENT_SECRET
-//   TEAM_NAME          -> o "slug" do time, ex: no link twitch.tv/team/meutimeaqui
-//                          o valor é "meutimeaqui"
-//   PORT               -> opcional, padrão 3000
-
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -39,14 +22,11 @@ if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) {
 // ---------------------------------------------------------------------------
 // 1. App Access Token (client credentials) com cache em memória
 // ---------------------------------------------------------------------------
-
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
 async function getAppAccessToken() {
   const now = Date.now();
-
-  // Reusa o token enquanto ele ainda for válido (com 60s de folga)
   if (cachedToken && now < tokenExpiresAt - 60_000) {
     return cachedToken;
   }
@@ -72,10 +52,8 @@ async function getAppAccessToken() {
   return cachedToken;
 }
 
-// Wrapper pra chamar qualquer endpoint da Helix já com os headers certos
 async function helixFetch(path) {
   const token = await getAppAccessToken();
-
   const resp = await fetch(`https://api.twitch.tv/helix${path}`, {
     headers: {
       "Client-Id": TWITCH_CLIENT_ID,
@@ -94,16 +72,8 @@ async function helixFetch(path) {
 // ---------------------------------------------------------------------------
 // 2. Buscar membros do time
 // ---------------------------------------------------------------------------
-//
-// GET /helix/teams?name=<team_name>
-// Retorna, entre outras coisas, um array `users` com cada membro do time
-// (id, login, display_name).
-
 async function getTeamMembers(teamName) {
-  const data = await helixFetch(
-    `/teams?name=${encodeURIComponent(teamName)}`
-  );
-
+  const data = await helixFetch(`/teams?name=${encodeURIComponent(teamName)}`);
   const team = data.data?.[0];
   if (!team) {
     throw new Error(`Time "${teamName}" não encontrado`);
@@ -117,12 +87,27 @@ async function getTeamMembers(teamName) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Ver quem está ao vivo agora, dentre uma lista de logins
+// NOVA FUNÇÃO: Buscar fotos de perfil do endpoint /users (Até 100 por chamada)
 // ---------------------------------------------------------------------------
-//
-// GET /helix/streams?user_login=a&user_login=b&user_login=c
-// Retorna só quem está ONLINE. A API aceita até 100 logins por chamada.
+async function getUsersAvatars(logins) {
+  if (logins.length === 0) return new Map();
 
+  const params = logins
+    .map((login) => `login=${encodeURIComponent(login)}`)
+    .join("&");
+
+  const data = await helixFetch(`/users?${params}`);
+  const avatarMap = new Map();
+
+  for (const user of data.data) {
+    avatarMap.set(user.login.toLowerCase(), user.profile_image_url);
+  }
+  return avatarMap;
+}
+
+// ---------------------------------------------------------------------------
+// 3. Ver quem está ao vivo agora
+// ---------------------------------------------------------------------------
 async function getLiveStatus(logins) {
   if (logins.length === 0) return new Map();
 
@@ -131,7 +116,6 @@ async function getLiveStatus(logins) {
     .join("&");
 
   const data = await helixFetch(`/streams?${params}&first=100`);
-
   const liveMap = new Map();
   for (const stream of data.data) {
     liveMap.set(stream.user_login.toLowerCase(), {
@@ -148,12 +132,9 @@ async function getLiveStatus(logins) {
 // ---------------------------------------------------------------------------
 // 4. Rota consumida pelo painel
 // ---------------------------------------------------------------------------
-
-// Cache curto pra não estourar rate limit se vários viewers abrirem o painel
-// ao mesmo tempo (todos batem no mesmo cache, não na API da Twitch direto).
 let statusCache = null;
 let statusCacheAt = 0;
-const STATUS_CACHE_MS = 30_000; // 30s
+const STATUS_CACHE_MS = 30_000;
 
 app.get("/api/team-status", async (req, res) => {
   const team = req.query.team || TEAM_NAME;
@@ -169,21 +150,30 @@ app.get("/api/team-status", async (req, res) => {
     }
 
     const members = await getTeamMembers(team);
-    const liveMap = await getLiveStatus(members.map((m) => m.login));
+    const logins = members.map((m) => m.login);
+
+    // Faz as duas requisições Helix em paralelo para otimizar velocidade
+    const [liveMap, avatarMap] = await Promise.all([
+      getLiveStatus(logins),
+      getUsersAvatars(logins)
+    ]);
 
     const result = {
       team,
       updatedAt: new Date().toISOString(),
       members: members
         .map((m) => {
-          const live = liveMap.get(m.login.toLowerCase());
+          const mLoginLower = m.login.toLowerCase();
+          const live = liveMap.get(mLoginLower);
+          const avatar = avatarMap.get(mLoginLower) || ""; // Pega o avatar mapeado
+          
           return {
             ...m,
+            profilePicture: avatar, // Adicionado ao JSON retornado para o frontend
             isLive: Boolean(live),
             stream: live || null,
           };
         })
-        // ao vivo primeiro, depois por nome
         .sort((a, b) => {
           if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
           return a.displayName.localeCompare(b.displayName);
