@@ -134,10 +134,9 @@ async function getLiveStatus(logins) {
 // ---------------------------------------------------------------------------
 
 const TEAMS_CONFIG = [
-  { id: "osguerreiros", displayName: "Equipe Principal", slug: "equipeprincipal" },
-  { id: "academiaosg", displayName: "Equipe Academia", slug: "equipeacademia" }
+  { id: "osguerreiros", displayName: "Equipe Principal", slug: "osguerreiros" },
+  { id: "academiaosg", displayName: "Equipe Academia", slug: "academiaosg" }
 ];
-
 
 
 app.get("/api/team-status", async (req, res) => {
